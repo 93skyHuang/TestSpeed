@@ -26,13 +26,15 @@ import java.util.HashMap;
 public class UdpManager {
     private static final String TAG = "UdpManager";
     private static UdpManager instance;
-    private static final int RECEIVE_PORT = 10007;
-    private static final int SEND_PORT = 10008;
+    private static final int RECEIVE_PORT = 8888;
+    private static final int SEND_PORT = 8888;//测速报文目的端口号为8888，后续会改为10008
+    private static final int RECEIVE_TIME_OUT_MILLISECONDS = 30000;//接收超时异常
     private DatagramSocket datagramSocket;
     private Thread receiveThread;//接收线程
     private Thread sendThread;//发送线程
     private boolean isReceiveUdp;
     private boolean isSendUdp;
+    private long receiveLength = 0;
 
     public static UdpManager getInstance() {
         if (instance == null) {
@@ -55,10 +57,11 @@ public class UdpManager {
         }
     }
 
-    public void sendBroadcastData(final byte[] message) {
+    public void sendUdpData(final byte[] message) {
         try {
-            Log.i(TAG, "sendBroadcastData" + Arrays.toString(message));
-            final DatagramPacket packet = new DatagramPacket(message, message.length, getBroadcastAddress(), SEND_PORT);
+            InetAddress broadcastAddress = getBroadcastAddress();
+            Log.i(TAG, "sendBroadcastData" + " broadcastAddress" + broadcastAddress.toString());
+            final DatagramPacket packet = new DatagramPacket(message, message.length, broadcastAddress, SEND_PORT);
             initDatagramSocket();
             datagramSocket.send(packet);
         } catch (Exception e) {
@@ -82,15 +85,24 @@ public class UdpManager {
         return InetAddress.getByAddress(quads);
     }
 
-
-    public void startReceiveUdp() {
+    public synchronized void startReceiveUdp() {
         isReceiveUdp = true;
+        receiveLength = 0;
+        Log.i(TAG, "startReceiveUdp: ");
+        allowMulticast();
         if (receiveThread == null || !receiveThread.isAlive()) {
             receiveThread = new Thread(() -> {
+                try {
+                    initDatagramSocket();
+                } catch (SocketException e) {
+                    Log.e(TAG, "startReceiveUdp: " + e);
+                    e.printStackTrace();
+                }
                 while (isReceiveUdp) {
                     try {
                         receiveListener();
                     } catch (IOException e) {
+                        Log.e(TAG, "startReceiveUdp: " + e);
                         e.printStackTrace();
                     }
                 }
@@ -109,37 +121,72 @@ public class UdpManager {
                 return;
             }
             datagramSocket.receive(packet);
-
+            receiveLength = receiveLength + packet.getLength();
+            Log.i(TAG, "receiveListener: " + receiveLength + "packet.getLength()" + packet.getLength());
         } catch (SocketTimeoutException e) {
             Log.e(TAG, "listenForResponses Receive timed out");
         }
     }
 
     public void stopReceiveUdp() {
+        Log.i(TAG, "stopReceiveUdp: ");
         isReceiveUdp = false;
         if (receiveThread != null) {
             receiveThread.interrupt();
         }
+        if (datagramSocket != null && !datagramSocket.isClosed()) {
+            datagramSocket.close();
+            datagramSocket = null;
+        }
         receiveThread = null;
+        receiveLength = 0;
+        releaseMulticastLock();
     }
 
-
-    public void startSendUdp() {
-        if (sendThread != null && !sendThread.isAlive()) {
+    public synchronized void startSendUdp() {
+        isSendUdp = true;
+        Log.i(TAG, "startSendUdp: ");
+        if (sendThread == null || !sendThread.isAlive()) {
             sendThread = new Thread(() -> {
-
+                while (isSendUdp) {
+                    byte[] bytes = new byte[1024];
+                    Log.i(TAG, "send" + Arrays.toString(bytes));
+                    sendUdpData(bytes);
+                }
             });
             sendThread.start();
         }
-
     }
 
     public void stopSendUdp() {
+        Log.i(TAG, "stopSendUdp: ");
         isSendUdp = false;
         if (sendThread != null) {
             sendThread.interrupt();
         }
         sendThread = null;
+    }
+
+    private WifiManager.MulticastLock multicastLock;
+
+    //这个请求不能超过50个 所以打开后需要即是的关闭
+    public void allowMulticast() {
+        if (multicastLock == null) {
+            WifiManager wifiManager = (WifiManager) MyApplication.getInstance().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wifiManager != null) {
+                multicastLock = wifiManager.createMulticastLock("multicast.udp");
+                Log.i(TAG, "allowMulticast  isHeld=" + multicastLock.isHeld());
+                multicastLock.acquire();
+            }
+        }
+    }
+
+    public void releaseMulticastLock() {
+        if (multicastLock != null) {
+            Log.i(TAG, "releaseMulticastLock");
+            multicastLock.release();
+            multicastLock = null;
+        }
     }
 
 }
