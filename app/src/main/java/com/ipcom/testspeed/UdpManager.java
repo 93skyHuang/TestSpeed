@@ -13,7 +13,13 @@ import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+
+import io.reactivex.Observable;
+import io.reactivex.android.schedulers.AndroidSchedulers;
+import io.reactivex.disposables.Disposable;
+import io.reactivex.functions.Consumer;
 
 /**
  * @Description: []
@@ -34,7 +40,12 @@ public class UdpManager {
     private Thread sendThread;//发送线程
     private boolean isReceiveUdp;
     private boolean isSendUdp;
-    private long receiveLength = 0;
+    private AtomicLong mAtomicLongOfReceiver;
+    private long mAllLengthOfReceiver;
+    private int testCount = 10;
+    private int count = 0;
+    private Disposable receiverDisposable;
+    private UDPReceiveListener mUDPReceiveListener;
 
     public static UdpManager getInstance() {
         if (instance == null) {
@@ -60,7 +71,6 @@ public class UdpManager {
     public void sendUdpData(final byte[] message) {
         try {
             InetAddress broadcastAddress = getBroadcastAddress();
-            Log.i(TAG, "sendBroadcastData" + " broadcastAddress" + broadcastAddress.toString());
             final DatagramPacket packet = new DatagramPacket(message, message.length, broadcastAddress, SEND_PORT);
             initDatagramSocket();
             datagramSocket.send(packet);
@@ -82,14 +92,16 @@ public class UdpManager {
         byte[] quads = new byte[4];
         for (int k = 0; k < 4; k++)
             quads[k] = (byte) ((broadcast >> k * 8) & 0xFF);
+        Log.i(TAG, "getBroadcastAddress: " + Arrays.toString(quads));
         return InetAddress.getByAddress(quads);
     }
 
     public synchronized void startReceiveUdp() {
         isReceiveUdp = true;
-        receiveLength = 0;
+        mAtomicLongOfReceiver = new AtomicLong(0);
+        mAllLengthOfReceiver = 0;
+        startTimer();
         Log.i(TAG, "startReceiveUdp: ");
-        allowMulticast();
         if (receiveThread == null || !receiveThread.isAlive()) {
             receiveThread = new Thread(() -> {
                 try {
@@ -121,8 +133,8 @@ public class UdpManager {
                 return;
             }
             datagramSocket.receive(packet);
-            receiveLength = receiveLength + packet.getLength();
-            Log.i(TAG, "receiveListener: " + receiveLength + "packet.getLength()" + packet.getLength());
+            int packetLength = packet.getLength();
+            mAtomicLongOfReceiver.addAndGet(packetLength);
         } catch (SocketTimeoutException e) {
             Log.e(TAG, "listenForResponses Receive timed out");
         }
@@ -134,13 +146,12 @@ public class UdpManager {
         if (receiveThread != null) {
             receiveThread.interrupt();
         }
+        receiveThread = null;
         if (datagramSocket != null && !datagramSocket.isClosed()) {
             datagramSocket.close();
             datagramSocket = null;
         }
-        receiveThread = null;
-        receiveLength = 0;
-        releaseMulticastLock();
+        cancelTimer(receiverDisposable);
     }
 
     public synchronized void startSendUdp() {
@@ -167,26 +178,43 @@ public class UdpManager {
         sendThread = null;
     }
 
-    private WifiManager.MulticastLock multicastLock;
-
-    //这个请求不能超过50个 所以打开后需要即是的关闭
-    public void allowMulticast() {
-        if (multicastLock == null) {
-            WifiManager wifiManager = (WifiManager) MyApplication.getInstance().getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-            if (wifiManager != null) {
-                multicastLock = wifiManager.createMulticastLock("multicast.udp");
-                Log.i(TAG, "allowMulticast  isHeld=" + multicastLock.isHeld());
-                multicastLock.acquire();
-            }
+    //定时器
+    private void startTimer() {
+        if (receiverDisposable == null || receiverDisposable.isDisposed()) {
+            count = 0;
+            receiverDisposable = Observable.interval(0, 1000, TimeUnit.MILLISECONDS)
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .subscribe(new Consumer<Long>() {
+                        @Override
+                        public void accept(Long aLong) throws Exception {
+                            long curLength = mAtomicLongOfReceiver.getAndSet(0);
+                            mAllLengthOfReceiver = mAllLengthOfReceiver + curLength;
+                            count++;
+                            if (count == testCount) {
+                                cancelTimer(receiverDisposable);
+                                if (mUDPReceiveListener != null) {
+                                    mUDPReceiveListener.receiveSuccess(curLength, mAllLengthOfReceiver);
+                                }
+                            } else {
+                                if (mUDPReceiveListener != null) {
+                                    mUDPReceiveListener.receiveSuccess(curLength, -1);
+                                }
+                            }
+                        }
+                    });
         }
     }
 
-    public void releaseMulticastLock() {
-        if (multicastLock != null) {
-            Log.i(TAG, "releaseMulticastLock");
-            multicastLock.release();
-            multicastLock = null;
+    /**
+     * 取消时间订阅
+     */
+    private void cancelTimer(Disposable disposable) {
+        if (disposable != null && !disposable.isDisposed()) {
+            disposable.dispose();
         }
     }
 
+    public void setUDPReceiveListener(UDPReceiveListener mUDPReceiveListener) {
+        this.mUDPReceiveListener = mUDPReceiveListener;
+    }
 }

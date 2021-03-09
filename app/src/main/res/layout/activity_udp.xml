@@ -27,4 +27,16 @@
         android:text="接收UDP"
         android:textSize="30dp" />
 
+    <TextView
+        android:id="@+id/tv_receive"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/tv_send"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="16sp" />
+
 </LinearLayout>

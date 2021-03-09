@@ -19,6 +19,7 @@ public class UDPActivity extends AppCompatActivity {
 
     UdpManager udpManager;
 
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -44,6 +45,17 @@ public class UDPActivity extends AppCompatActivity {
             } else {
                 tv.setText("接收UDP");
                 udpManager.stopReceiveUdp();
+            }
+        });
+        udpManager.setUDPReceiveListener(new UDPReceiveListener() {
+            @Override
+            public void receiveSuccess(long length, long allLength) {
+                ((TextView) findViewById(R.id.tv_receive)).setText("接收长度" + length);
+            }
+
+            @Override
+            public void receiveFailed(int error) {
+
             }
         });
     }

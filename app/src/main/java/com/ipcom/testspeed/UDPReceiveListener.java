@@ -10,7 +10,11 @@ package com.ipcom.testspeed;
  */
 public interface UDPReceiveListener {
 
-    void receiveSuccess(byte data);
+    /**
+     *  长度  byte
+     * @param length
+     */
+    void receiveSuccess(long length,long allLength);
 
     void receiveFailed(int error);
 
